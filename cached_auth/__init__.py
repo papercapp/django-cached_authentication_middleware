@@ -4,6 +4,7 @@ from django.conf import settings
 from django.contrib.auth import get_user, SESSION_KEY
 from django.core.cache import caches
 from django.db.models.signals import post_save, post_delete
+from django.core.exceptions import ObjectDoesNotExist
 from django.utils.functional import SimpleLazyObject
 
 from django.contrib.auth.models import AnonymousUser
@@ -24,21 +25,18 @@ except ImportError:
     from django.db.models import get_model
 
 
-try:
-    app_label, model_name = settings.AUTH_PROFILE_MODULE.split('.')
-    profile_model = get_model(app_label, model_name)
-except (ValueError, AttributeError):
-    profile_model = None
+user_profile_accessor = "profile"
+if hasattr(settings, 'CACHED_AUTH_USER_PROFILE_ACCESSOR_FIELD'):
+    user_profile_accessor = settings.CACHED_AUTH_USER_PROFILE_ACCESSOR_FIELD
 
 
 def profile_preprocessor(user, request):
     """ Cache user profile """
-    if profile_model:
-        try:
-            user.get_profile()
-        # Handle exception for user with no profile and AnonymousUser
-        except (profile_model.DoesNotExist, AttributeError):
-            pass
+    try:
+        getattr(user, user_profile_accessor).pk
+    # Handle exception for user with no profile and AnonymousUser
+    except (ObjectDoesNotExist, AttributeError):
+        pass
     return user
 
 
@@ -72,16 +70,16 @@ def invalidate_cache(sender, instance, **kwargs):
 
 def get_cached_user(request):
     if not hasattr(request, '_cached_user'):
-        try:
+        user = None
+        if not request.user.is_anonymous():
             key = CACHE_KEY % request.session[SESSION_KEY]
             user = cache.get(key)
-        except KeyError:
-            user = AnonymousUser()
-        if user is None:
-            user = get_user(request)
-            if user_preprocessor:
-                user = user_preprocessor(user, request)
-            cache.set(key, user)
+
+            if user is None:
+                user = get_user(request)
+                if user_preprocessor:
+                    user = user_preprocessor(user, request)
+                cache.set(key, user)
         request._cached_user = user
     return request._cached_user
 
@@ -89,11 +87,16 @@ def get_cached_user(request):
 class Middleware(object):
 
     def __init__(self):
-        post_save.connect(invalidate_cache, sender=get_user_model())
-        post_delete.connect(invalidate_cache, sender=get_user_model())
-        if profile_model:
-            post_save.connect(invalidate_cache, sender=profile_model)
-            post_delete.connect(invalidate_cache, sender=profile_model)
+        user_model = get_user_model()
+        post_save.connect(invalidate_cache, sender=user_model)
+        post_delete.connect(invalidate_cache, sender=user_model)
+        accessor_field = getattr(user_model, user_profile_accessor, None)
+        if accessor_field:
+            profile_model = accessor_field.related.related_model
+
+            if profile_model:
+                post_save.connect(invalidate_cache, sender=profile_model)
+                post_delete.connect(invalidate_cache, sender=profile_model)
 
     def process_request(self, request):
         assert hasattr(request, 'session'), "The Django authentication middleware requires session middleware to be installed. Edit your MIDDLEWARE_CLASSES setting to insert 'django.contrib.sessions.middleware.SessionMiddleware'."
