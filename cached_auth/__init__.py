@@ -1,8 +1,8 @@
-VERSION = (0, 2, 1)
+VERSION = (0, 2, 2)
 
 from django.conf import settings
 from django.contrib.auth import get_user, SESSION_KEY
-from django.core.cache import cache
+from django.core.cache import caches
 from django.db.models.signals import post_save, post_delete
 from django.utils.functional import SimpleLazyObject
 
@@ -53,6 +53,13 @@ if hasattr(settings, 'CACHED_AUTH_PREPROCESSOR'):
         raise Exception("CACHED_AUTH_PREPROCESSOR must be callable with 2 arguments user and request")
 else:
     user_preprocessor = profile_preprocessor
+
+
+cache_backend = "default"
+if hasattr(settings, 'CACHED_AUTH_CACHE_BACKEND'):
+   cache_backend = settings.CACHED_AUTH_CACHE_BACKEND
+
+cache = caches[cache_backend]
 
 
 def invalidate_cache(sender, instance, **kwargs):
