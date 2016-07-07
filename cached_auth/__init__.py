@@ -70,16 +70,17 @@ def invalidate_cache(sender, instance, **kwargs):
 
 def get_cached_user(request):
     if not hasattr(request, '_cached_user'):
-        user = None
-        if not request.user.is_anonymous():
-            key = CACHE_KEY % request.session[SESSION_KEY]
+        key = CACHE_KEY % request.session[SESSION_KEY]
+        try:
             user = cache.get(key)
+        except KeyError:
+            user = AnonymousUser()
 
-            if user is None:
-                user = get_user(request)
-                if user_preprocessor:
-                    user = user_preprocessor(user, request)
-                cache.set(key, user)
+        if user is None:
+            user = get_user(request)
+            if user_preprocessor:
+                user = user_preprocessor(user, request)
+            cache.set(key, user)
         request._cached_user = user
     return request._cached_user
 
